@@ -1,0 +1,65 @@
+{
+  "missing_reference": [
+    {"lc_id": "LC42535", "missing_in": "Contadores"},
+    {"lc_id": "LC42453", "missing_in": "Contadores"},
+    {"lc_id": "LC440965", "missing_in": "Contadores"},
+    {"lc_id": "LC41944", "missing_in": "Contadores"},
+    {"lc_id": "LC437204", "missing_in": "Contadores"},
+    {"lc_id": "LC42559", "missing_in": "Contadores"},
+    {"lc_id": "LC42506", "missing_in": "Contadores"},
+    {"lc_id": "LC43022", "missing_in": "Contadores"},
+    {"lc_id": "LC42715", "missing_in": "Contadores"},
+    {"lc_id": "LC42124", "missing_in": "Contadores"},
+    {"lc_id": "LC449886", "missing_in": "Contadores"},
+    {"lc_id": "LC443859", "missing_in": "Contadores"},
+    {"lc_id": "LC42659", "missing_in": "Contadores"},
+    {"lc_id": "LC444626", "missing_in": "Contadores"},
+    {"lc_id": "LC449814", "missing_in": "Contadores"},
+    {"lc_id": "LC448770", "missing_in": "Contadores"},
+    {"lc_id": "LC42618", "missing_in": "Contadores"},
+    {"lc_id": "LC42423", "missing_in": "Contadores"},
+    {"lc_id": "LC449887", "missing_in": "Contadores"},
+    {"lc_id": "LC42401", "missing_in": "Contadores"},
+    {"lc_id": "LC42542", "missing_in": "Contadores"},
+    {"lc_id": "LC42793", "missing_in": "Contadores"},
+    {"lc_id": "LC448222", "missing_in": "Contadores"},
+    {"lc_id": "LC449053", "missing_in": "Contadores"},
+    {"lc_id": "LC440647", "missing_in": "Contadores"},
+    {"lc_id": "LC42634", "missing_in": "Contadores"},
+    {"lc_id": "LC42082", "missing_in": "Contadores"},
+    {"lc_id": "LC42615", "missing_in": "Contadores"},
+    {"lc_id": "LC42481", "missing_in": "Contadores"},
+    {"lc_id": "LC449147", "missing_in": "Contadores"},
+    {"lc_id": "LC42579", "missing_in": "Contadores"},
+    {"lc_id": "LC42721", "missing_in": "Contadores"},
+    {"lc_id": "LC444111", "missing_in": "Contadores"},
+    {"lc_id": "LC42515", "missing_in": "Contadores"},
+    {"lc_id": "LC440922", "missing_in": "Contadores"},
+    {"lc_id": "LC42794", "missing_in": "Contadores"},
+    {"lc_id": "LC42549", "missing_in": "Contadores"},
+    {"lc_id": "LC42508", "missing_in": "Contadores"},
+    {"lc_id": "LC445622", "missing_in": "Contadores"},
+    {"lc_id": "LC42520", "missing_in": "Contadores"}
+  ],
+
+  "calibre 0":[ 
+    {"lc_id": "LC449962"},
+    {"lc_id": "LC449963"}
+  ],
+
+  "low_representability":[
+    {"lc_id": "LC448109"}
+  ],
+
+  "multiple_contadores": [
+    {"lc_id": "LC41902"},
+    {"lc_id": "LC42028"},
+    {"lc_id": "LC42423"},
+    {"lc_id": "LC438359"},
+    {"lc_id": "LC438405"},
+    {"lc_id": "LC438413"},
+    {"lc_id": "LC438499"},
+    {"lc_id": "LC438502"},
+    {"lc_id": "LC438510"}
+  ]
+}
