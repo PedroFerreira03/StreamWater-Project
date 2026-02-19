@@ -16,10 +16,12 @@ The method leverages **frequency-distribution clustering of behavioural subgroup
 │
 ├── Data
 │   ├── Contadores.xlsx
+│   ├── inputs_ts.csv  # After executing Notebook
 │   └── TelemetriaConsumosVilaSol_v2.csv
+    
 │
 ├── variables
-│   └── variables.pkl            # Generated warm-up artefacts
+│   └── variables.pkl            # After executing Notebook
 │
 └── README.md
 ```
