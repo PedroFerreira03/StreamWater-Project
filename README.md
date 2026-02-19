@@ -189,36 +189,36 @@ Only groups with validated weights are shown.
 
 | Type of Consumption | Calibre | weight_contact | ewma_alpha |
 |---|---|---|---|
-| Rega Inframoura | 40 | 0.1 | 0.1 |
-| Comércio | 15 | 0.9 | 0.9 |
-| Doméstico | 15 | 0.9 | 0.9 |
-| Serviços-Condomínio | 15 | 0.3 | 0.3 |
-| Indústria | 15 | 0.7 | 0.9 |
-| Serviços-Condomínio | 20 | 0.7 | 0.5 |
-| Indústria | 50 | 0.5 | 0.9 |
-| Indústria | 40 | 0.9 | 0.9 |
-| Indústria | 20 | 0.7 | 0.7 |
-| Comércio | 40 | 0.1 | 0.1 |
-| Rega Inframoura | 15 | 0.1 | 0.1 |
-| Serviços 2º Contador – Rega Condomínio | 50 | 0.7 | 0.9 |
-| Indústria sem RSU | 80 | 0.1 | 0.7 |
-| Serviços-Condomínio | 65 | 0.7 | 0.3 |
-| Serviços-Condomínio | 100 | 0.9 | 0.7 |
-| Rega-Doméstico | 20 | 0.9 | 0.3 |
-| Doméstico | 20 | 0.9 | 0.9 |
-| Não Doméstico – Rega | 20 | 0.9 | 0.7 |
-| Rega-Doméstico | 15 | 0.1 | 0.1 |
-| Rega Inframoura | 30 | 0.1 | 0.3 |
-| Indústria | 30 | 0.3 | 0.9 |
-| Instituições de Utilidade Pública | 15 | 0.1 | 0.1 |
-| Rega Inframoura | 20 | 0.1 | 0.5 |
-| Serviços 2º Contador – Rega Condomínio | 80 | 0.1 | 0.3 |
-| Serviços 2º Contador – Rega Condomínio | 40 | 0.1 | 0.3 |
-| Indústria | 25 | 0.1 | 0.1 |
-| Indústria Inframoura | 15 | 0.1 | 0.5 |
-| Obras | 15 | 0.1 | 0.1 |
-| Serviços-Condomínio | 80 | 0.1 | 0.9 |
-| Obras | 20 | 0.1 | 0.7 |
+| Irrigation Inframoura | 40 | 0.1 | 0.1 |
+| Commerce | 15 | 0.9 | 0.9 |
+| Domestic | 15 | 0.9 | 0.9 |
+| Services-Condominium | 15 | 0.3 | 0.3 |
+| Industry | 15 | 0.7 | 0.9 |
+| Services-Condominium | 20 | 0.7 | 0.5 |
+| Industry | 50 | 0.5 | 0.9 |
+| Industry | 40 | 0.9 | 0.9 |
+| Industry | 20 | 0.7 | 0.7 |
+| Commerce | 40 | 0.1 | 0.1 |
+| Irrigation Inframoura | 15 | 0.1 | 0.1 |
+| Services 2nd Meter – Condominium Irrigation | 50 | 0.7 | 0.9 |
+| Industry without MSW | 80 | 0.1 | 0.7 |
+| Services-Condominium | 65 | 0.7 | 0.3 |
+| Services-Condominium | 100 | 0.9 | 0.7 |
+| Irrigation-Domestic | 20 | 0.9 | 0.3 |
+| Domestic | 20 | 0.9 | 0.9 |
+| Non-Domestic – Irrigation | 20 | 0.9 | 0.7 |
+| Irrigation-Domestic | 15 | 0.1 | 0.1 |
+| Irrigation Inframoura | 30 | 0.1 | 0.3 |
+| Industry | 30 | 0.3 | 0.9 |
+| Public Utility Institutions | 15 | 0.1 | 0.1 |
+| Irrigation Inframoura | 20 | 0.1 | 0.5 |
+| Services 2nd Meter – Condominium Irrigation | 80 | 0.1 | 0.3 |
+| Services 2nd Meter – Condominium Irrigation | 40 | 0.1 | 0.3 |
+| Industry | 25 | 0.1 | 0.1 |
+| Industry Inframoura | 15 | 0.1 | 0.5 |
+| Construction Works | 15 | 0.1 | 0.1 |
+| Services-Condominium | 80 | 0.1 | 0.9 |
+| Construction Works | 20 | 0.1 | 0.7 |
 
 ---
 
