@@ -43,7 +43,7 @@ class BatchImputationEngine:
         self.weight_subgroup = 1 - weight_contact
         self.ewma_alpha = ewma_alpha
         
-        # Statistics per (pair_idx, subgroup_idx)
+        # Statistics per (pair_idx, subgroup_idx) -> Subgroup for each Group
         self.subgroup_stats = defaultdict(lambda: {
             'pop_mean': None,
             'ewma_mean': None,
@@ -53,7 +53,7 @@ class BatchImputationEngine:
             'count': 0
         })
         
-        # Statistics per (contact_id, pair_idx, subgroup_idx)
+        # Statistics per (contact_id, pair_idx, subgroup_idx) -> Subgroup for each LC
         self.contact_stats = defaultdict(lambda: {
             'pop_mean': None,
             'ewma_mean': None,
