@@ -154,9 +154,22 @@ This script performs **real-time imputation** and optional **post-processing**.
 
 ## 🔁 Imputation Fallback Strategy
 
-DISCO performs imputation using a **hierarchical fallback mechanism** to guarantee robustness when data is missing or insufficient at finer levels of granularity. 
+DISCO performs imputation using a **hierarchical fallback mechanism** to guarantee robustness. 
 
-Each imputed value is returned **together with the level used**, allowing full traceability and quality assessment.
+Each imputed value is returned **together with the level used**, allowing full traceability. This mechanism relies on pre-computed statistics that keep changing as time goes on.
+
+### Warm-up Data Structures
+The Data Structures that keep getting updated are the following:
+
+* **`subgroup_stats`**: Statistics per `(pair_idx, subgroup_idx)`.
+* **`contact_stats`**: Specific statistics for `(contact_id, pair_idx, subgroup_idx)`.
+* **`contact_pair_stats`**: Aggregated statistics for a contact across all subgroups `(contact_id, pair_idx)`.
+* **`pair_stats`**: Global statistics for a `pair_idx` (all subgroups combined).
+
+Each structure contains the following metrics:
+- `pop_mean` / `pop_var`: Population-wide metrics.
+- `ewma_mean` / `ewma_var` / `ewma_std`: Exponentially weighted moving metrics.
+- `count`: Number of observations.
 
 ### Imputation Levels (from most specific to most general)
 
