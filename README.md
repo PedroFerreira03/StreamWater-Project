@@ -230,9 +230,3 @@ DISCO enables:
 - **Robust fallback** across 4 specificity levels to handle any LC, including unseen ones.
 - **EWMA corrections** to follow consumption pattern shifts over time.
 - **Full traceability** — every imputed value is tagged with the level used.
-
-DISCO enables:
-- **Behaviour-aware clustering** for precise profiling.
-- **Real-time imputation** for continuous data streams.
-- **Adaptive EWMA corrections** to follow consumption shifts.
-- **Scalable deployment for smart-meter time series.**
