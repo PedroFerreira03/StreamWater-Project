@@ -13,7 +13,7 @@ class BatchImputationEngine:
     
     def __init__(self, subgroups_list, idx2pair, pair2idx,
                  warmup_contact=0, warmup_subgroup=0, weight_contact=0.7,
-                 ewma_alpha=0.1):
+                 ewma_alpha=0.1, skip=False):
         """
         Initialize batch imputation engine for all contacts.
         
@@ -42,6 +42,7 @@ class BatchImputationEngine:
         self.weight_contact = weight_contact
         self.weight_subgroup = 1 - weight_contact
         self.ewma_alpha = ewma_alpha
+        self.skip = skip
         
         # Statistics per (pair_idx, subgroup_idx) -> Subgroup for each Group
         self.subgroup_stats = defaultdict(lambda: {
@@ -439,6 +440,10 @@ class BatchImputationEngine:
         
         # Flush final batch
         self._flush_batch(current_batch)
+
+        if self.skip:
+            print("Skipping normalization and cumulative recomputation as per configuration.")
+            return df
         
         print("Pass 2: Normalizing segments...")
 
@@ -590,5 +595,6 @@ if __name__ == "__main__":
         warmup_contact=0,
         warmup_subgroup=0,
         weight_contact=0.7,
-        ewma_alpha=0.1
+        ewma_alpha=0.1,
+        skip=False,
     )
