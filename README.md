@@ -109,7 +109,7 @@ This file represents the **model warm-up** required for online imputation.
 
 ## Belief Update Logic
 
-The belief update for a **Load Controller (LC)** and its corresponding **Subgroup** follows an Exponential Moving Average (EMA) model to balance historical data with new observations.
+The belief update for a **Point of Consumption (LC)** and its corresponding **Subgroup** follows an Exponential Moving Average (EMA) model to balance historical data with new observations.
 
 ### 1. LC Belief Update
 For each **LC**, the belief is updated at each time step `t` as follows:
