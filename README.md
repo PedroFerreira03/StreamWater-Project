@@ -106,7 +106,7 @@ Contents:
 
 # 2️⃣ Imputation — `src/impute_ts.py`
 
-This script performs **batch imputation** over the full `inputs_ts.csv` dataset, processing records sequentially. Optionally, it also applies EWMA corrections and rebuilds cumulative values.
+This script performs **batch imputation** over the full `inputs_ts.csv` dataset, processing records sequentially. Optionally, it also applies applies range corrections upon True value and rebuilds cumulative values.
 
 ## ⚙️ Script Parameters
 
@@ -120,7 +120,7 @@ This script performs **batch imputation** over the full `inputs_ts.csv` dataset,
 
 **The script performs the following steps:**
 1. Iterates through the dataset, imputing missing values and updating warm-up statistics.
-2. Applies EWMA corrections (optional, skipped if `skip=True`).
+2. Applies range corrections upon True value (optional, skipped if `skip=True`).
 3. Rebuilds cumulative values (optional, skipped if `skip=True`).
 
 ---
