@@ -11,8 +11,8 @@ The method leverages **frequency-distribution clustering of behavioural subgroup
 ```text
 .
 ├── src
-│   ├── data_analysis.ipynb      # Clustering + statistics warm-up (run once)
-│   └── impute_ts.py             # Batch imputation pipeline
+│   ├── data_analysis.ipynb      # Clustering 
+│   └── impute_ts.py             # Batch imputation pipeline (Warm-up statistics)
 │
 ├── Data
 │   ├── Contadores.xlsx          # Static input
@@ -27,11 +27,10 @@ The method leverages **frequency-distribution clustering of behavioural subgroup
 
 ---
 
-# 1️⃣ Clustering & Warm-Up — `src/data_analysis.ipynb`
+# 1️⃣ Clustering — `src/data_analysis.ipynb`
 
 This notebook prepares the historical dataset and builds the **distributional subgroup clusters** used during imputation. Its output (`variables.pkl`) defines the group/subgroup structure that `impute_ts.py` loads at startup. It only needs to be re-run if consumption patterns change significantly.
 
-> **Note on statistics warm-up:** `impute_ts.py` initialises all statistics from scratch and updates them as it processes each record — this is the warm-up phase. If you want to adapt the script for **true online (stream) imputation**, `impute_ts.py` should first be run in warm-up mode (`skip=True`) on historical data to build up the statistics before serving live imputation requests.
 
 ## Input Datasets
 
@@ -116,12 +115,14 @@ This script performs **batch imputation** over the full `inputs_ts.csv` dataset,
 | `input_csv` | Path to hourly time-series file | required |
 | `weight_contact` | Weight given to the LC's own history when blending with subgroup data at Level 1. `(1 - weight_contact)` is the subgroup's weight. | 0.7 |
 | `ewma_alpha` | EWMA decay factor α | 0.1 |
-| `skip` | If `True`, only updates statistics without imputing or post-processing | `False` |
+| `skip` | If `True`, only updates statistics without normalizing or post-processing | `False` |
 
 **The script performs the following steps:**
 1. Iterates through the dataset, imputing missing values and updating warm-up statistics.
-2. Applies range corrections upon True value (optional, skipped if `skip=True`).
+2. Applies range corrections (normalization) upon True value (optional, skipped if `skip=True`).
 3. Rebuilds cumulative values (optional, skipped if `skip=True`).
+
+> **Note on statistics warm-up:** `impute_ts.py` initialises all statistics from scratch and updates them as it processes each record — this is the warm-up phase. If you want to adapt the script for **true online (stream) imputation**, `impute_ts.py` should first be run in warm-up mode (`skip=True`) on historical data to build up the statistics before serving live imputation requests.
 
 ---
 
@@ -149,7 +150,7 @@ Two beliefs are maintained and updated at each time step `t`:
 
 ### Initialisation
 
-All belief values (`pop_mean`, `ewma_mean`, `ewma_var`, `ewma_std`) are initialised to **0**. `count` is initialised to **1** to avoid division-by-zero on the first update.
+All belief values (`pop_mean`, `ewma_mean`, `ewma_var`, `ewma_std`) are initialised as **None**. `count` is initialised to **0**.
 
 ---
 
@@ -228,5 +229,5 @@ DISCO enables:
 - **Behaviour-aware clustering** for precise temporal profiling.
 - **Batch imputation** with adaptive statistics that update as the dataset is processed.
 - **Robust fallback** across 4 specificity levels to handle any LC, including unseen ones.
-- **EWMA corrections** to follow consumption pattern shifts over time.
+- **Normalization** to correct cumulative values.
 - **Full traceability** — every imputed value is tagged with the level used.
