@@ -92,6 +92,8 @@ The clustering output is a **list of lists**. Each index corresponds to one grou
 }
 ```
 
+If detailed information regarding each group and subgroup is required, please refer to the file `info/subgroups.json`.
+
 ### Stored Artefacts
 
 Saved to `variables/variables.pkl`. This file is loaded once by `impute_ts.py` and is not modified during imputation.
