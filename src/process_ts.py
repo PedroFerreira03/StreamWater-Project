@@ -9,11 +9,12 @@ class BatchImputationEngine:
     """
     Process entire dataset for all contacts, imputing missing consumption values.
     Handles multiple (calibre, tipo_consumo) groups and performs online imputation.
+    Enhanced with fallback strategies and proper meter change handling.
     """
     
     def __init__(self, subgroups_list, idx2pair, pair2idx,
                  warmup_contact=0, warmup_subgroup=0, weight_contact=0.7,
-                 ewma_alpha=0.1, skip=False):
+                 ewma_alpha=0.1):
         """
         Initialize batch imputation engine for all contacts.
         
@@ -42,9 +43,8 @@ class BatchImputationEngine:
         self.weight_contact = weight_contact
         self.weight_subgroup = 1 - weight_contact
         self.ewma_alpha = ewma_alpha
-        self.skip = skip
         
-        # Statistics per (pair_idx, subgroup_idx) -> Subgroup for each Group
+        # Statistics per (pair_idx, subgroup_idx)
         self.subgroup_stats = defaultdict(lambda: {
             'pop_mean': None,
             'ewma_mean': None,
@@ -54,8 +54,28 @@ class BatchImputationEngine:
             'count': 0
         })
         
-        # Statistics per (contact_id, pair_idx, subgroup_idx) -> Subgroup for each LC
+        # Statistics per (contact_id, pair_idx, subgroup_idx)
         self.contact_stats = defaultdict(lambda: {
+            'pop_mean': None,
+            'ewma_mean': None,
+            'pop_var': None,
+            'ewma_var': None,
+            'ewma_std': None,
+            'count': 0
+        })
+        
+        # Statistics per (contact_id, pair_idx) - all subgroups combined
+        self.contact_pair_stats = defaultdict(lambda: {
+            'pop_mean': None,
+            'ewma_mean': None,
+            'pop_var': None,
+            'ewma_var': None,
+            'ewma_std': None,
+            'count': 0
+        })
+        
+        # Statistics per pair_idx - all subgroups combined
+        self.pair_stats = defaultdict(lambda: {
             'pop_mean': None,
             'ewma_mean': None,
             'pop_var': None,
@@ -187,6 +207,12 @@ class BatchImputationEngine:
         
         # Check if cumulative is non-decreasing
         last_cumulative = self.last_real_cumulative[contact_id]
+        
+        # If last_cumulative is None (after meter change with no reading), treat current as new baseline
+        if last_cumulative is None:
+            self.last_real_cumulative[contact_id] = cumulative
+            return True, False  # Valid cumulative, but no consumption to compute
+        
         if cumulative < last_cumulative:
             return False, False  # Invalid cumulative
         
@@ -197,46 +223,74 @@ class BatchImputationEngine:
     
     def _impute_value(self, contact_id, pair_idx, subgroup_idx):
         """
-        Impute consumption value using weighted combination of contact and subgroup stats.
+        Impute consumption value using fallback hierarchy:
+        1. Contact + Subgroup (weighted combination)
+        2. Only Subgroup (no contact history)
+        3. Only Contact + Pair (contact history without subgroup discrimination)
+        4. Only Pair (group statistics)
+        5. Insufficient data
         
         Returns:
         --------
-        tuple: (imputed_consumption, ewma_std) or (None, None)
+        tuple: (imputed_consumption, ewma_std, imputation_source) or (None, None, None)
         """
-        # Get stats
+        # Get stats for all levels
         subgroup_key = (pair_idx, subgroup_idx)
-        contact_key = (contact_id, pair_idx, subgroup_idx)  # CHANGED: now includes pair_idx
+        contact_subgroup_key = (contact_id, pair_idx, subgroup_idx)
+        contact_pair_key = (contact_id, pair_idx)
+        pair_key = pair_idx
         
         subgroup_stats = self.subgroup_stats[subgroup_key]
-        contact_stats = self.contact_stats[contact_key]
+        contact_subgroup_stats = self.contact_stats[contact_subgroup_key]
+        contact_pair_stats = self.contact_pair_stats[contact_pair_key]
+        pair_stats = self.pair_stats[pair_key]
         
-        # Check warmup requirements
-        if (contact_stats['count'] < self.warmup_contact or 
-            subgroup_stats['count'] < self.warmup_subgroup):
-            return None, None
+        # Check warmup requirements for each level
+        has_contact_subgroup = (contact_subgroup_stats['count'] >= self.warmup_contact and 
+                                contact_subgroup_stats['ewma_mean'] is not None)
+        has_subgroup = (subgroup_stats['count'] >= self.warmup_subgroup and 
+                       subgroup_stats['ewma_mean'] is not None)
+        has_contact_pair = (contact_pair_stats['count'] >= self.warmup_contact and 
+                           contact_pair_stats['ewma_mean'] is not None)
+        has_pair = (pair_stats['count'] >= self.warmup_subgroup and 
+                   pair_stats['ewma_mean'] is not None)
         
-        if contact_stats['ewma_mean'] is None or subgroup_stats['ewma_mean'] is None:
-            return None, None
+        # Fallback hierarchy
+        if has_contact_subgroup and has_subgroup:
+            # Best case: both contact+subgroup and subgroup available
+            imputed_mean = (self.weight_contact * contact_subgroup_stats['ewma_mean'] + 
+                           self.weight_subgroup * subgroup_stats['ewma_mean'])
+            
+            contact_ewma_var = contact_subgroup_stats['ewma_std']**2 if contact_subgroup_stats['ewma_std'] else 0
+            subgroup_ewma_var = subgroup_stats['ewma_std']**2 if subgroup_stats['ewma_std'] else 0
+            
+            combined_ewma_var = (self.weight_contact**2 * contact_ewma_var + 
+                                self.weight_subgroup**2 * subgroup_ewma_var)
+            combined_ewma_std = np.sqrt(combined_ewma_var)
+            
+            return imputed_mean, combined_ewma_std, 'contact_subgroup'
         
-        # Weighted combination
-        imputed_mean = (self.weight_contact * contact_stats['ewma_mean'] + 
-                       self.weight_subgroup * subgroup_stats['ewma_mean'])
+        elif has_subgroup:
+            # No contact history, but subgroup available
+            return subgroup_stats['ewma_mean'], subgroup_stats['ewma_std'], 'only_subgroup'
         
-        # Combined variance
-        contact_ewma_var = contact_stats['ewma_std']**2 if contact_stats['ewma_std'] else 0
-        subgroup_ewma_var = subgroup_stats['ewma_std']**2 if subgroup_stats['ewma_std'] else 0
+        elif has_contact_pair:
+            # No subgroup data, use contact's overall history for this pair
+            return contact_pair_stats['ewma_mean'], contact_pair_stats['ewma_std'], 'only_contact'
         
-        combined_ewma_var = (self.weight_contact**2 * contact_ewma_var + 
-                            self.weight_subgroup**2 * subgroup_ewma_var)
+        elif has_pair:
+            # No contact data at all, use overall pair statistics
+            return pair_stats['ewma_mean'], pair_stats['ewma_std'], 'only_group'
         
-        combined_ewma_std = np.sqrt(combined_ewma_var)
-        
-        return imputed_mean, combined_ewma_std
+        else:
+            # Insufficient data at all levels
+            return None, None, 'insufficient_data'
     
     def _normalize_segment(self, df_subset, start_idx, end_idx):
         """
         Normalize imputed values between two real CUMULATIVE values.
-        Works with both real and anchor_imputed endpoints.
+        Works with anchor_imputed endpoints.
+        Updates correction status to 'Yes' for normalized values.
         """
         if start_idx is None or end_idx is None:
             return
@@ -255,19 +309,23 @@ class BatchImputationEngine:
         start_cumulative = start_row['cumulative_value']
         end_cumulative = end_row['cumulative_value']
         
-        # Get the end consumption (might be real or imputed)
+        # Get the end consumption (might be real or anchor_imputed)
         end_consumption = end_row['consumption']
         
-        # Determine segment based on end row type
-        if end_row['imputation_type'] in ['imputed', 'fully_imputed', 'anchor_imputed']:
+        # Check if end row is anchor imputed
+        is_anchor_imputed = end_row['imputation_source'].startswith('anchor_') 
+        
+        if is_anchor_imputed:
+            # End is anchor_imputed - include it in normalization
             actual_diff = end_cumulative - start_cumulative
             segment = df_subset.loc[start_idx+1:end_idx]  # Include end_idx
         else:
+            # End is real - exclude it from normalization
             actual_diff = end_cumulative - start_cumulative - end_consumption
             segment = df_subset.loc[start_idx+1:end_idx-1]  # Exclude end_idx
 
-        # Get imputed values in segment
-        imputed_mask = segment['imputation_type'].isin(['imputed', 'fully_imputed', 'anchor_imputed'])
+        # Get imputed values in segment (both fully imputed and anchor imputed)
+        imputed_mask = segment['imputation_source'].str.startswith(('imputed_', 'anchor_'))
         
         if not imputed_mask.any():
             return
@@ -277,8 +335,7 @@ class BatchImputationEngine:
             # Set all imputed values to zero
             for idx in segment[imputed_mask].index:
                 df_subset.at[idx, 'corrected_consumption'] = 0
-                if idx != end_idx:
-                    df_subset.at[idx, 'imputation_type'] = 'corrected'
+                df_subset.at[idx, 'correction'] = 'Yes'
             return
         
         # Normal case: normalize proportionally
@@ -292,8 +349,7 @@ class BatchImputationEngine:
             
             for idx in segment[imputed_mask].index:
                 df_subset.at[idx, 'corrected_consumption'] = equal_share
-                if idx != end_idx:
-                    df_subset.at[idx, 'imputation_type'] = 'corrected'
+                df_subset.at[idx, 'correction'] = 'Yes'
             return
         
         # Standard proportional normalization
@@ -301,8 +357,7 @@ class BatchImputationEngine:
             old_consumption = df_subset.at[idx, 'consumption']
             new_consumption = (old_consumption / sum_imputed) * actual_diff
             df_subset.at[idx, 'corrected_consumption'] = new_consumption
-            if idx != end_idx:
-                df_subset.at[idx, 'imputation_type'] = 'corrected'
+            df_subset.at[idx, 'correction'] = 'Yes'
     
     def process_dataframe(self, df):
         """
@@ -316,20 +371,21 @@ class BatchImputationEngine:
         
         Returns:
         --------
-        DataFrame with added columns: imputation_type, corrected_consumption, ewma_std
+        DataFrame with added columns: imputation_source, correction, corrected_consumption, ewma_std
         """
         print(f"Processing {len(df)} rows for {df['contact_id'].nunique()} unique contacts...")
         
         # Add new columns
         df = df.copy()
-        df['imputation_type'] = 'unknown'
+        df['imputation_source'] = 'unknown'
+        df['correction'] = 'No'
         df['corrected_consumption'] = np.nan
         df['ewma_std'] = np.nan
         
         # Sort by time
         df = df.sort_values(['data', 'hour']).reset_index(drop=True)
         
-        # Process in two passes:
+        # Process in three passes:
         # Pass 1: Update statistics and perform initial imputation
         # Pass 2: Normalize segments
         # Pass 3: Compute cumulatives
@@ -338,43 +394,71 @@ class BatchImputationEngine:
         
         # Group by (date, hour) for batch updates
         current_batch = defaultdict(lambda: defaultdict(list))
+        current_pair_batch = defaultdict(list)
         last_date_hour = None
         
         for idx, row in tqdm(df.iterrows(), total=len(df)):
             contact_id = row['contact_id']
             
-            # Get pair from row data (CHANGED: dynamic extraction)
+            # Get pair from row data
             pair = self._get_pair_from_row(row)
             
             if pair is None:
-                df.at[idx, 'imputation_type'] = 'unknown_pair'
+                df.at[idx, 'imputation_source'] = 'unknown_pair'
+                df.at[idx, 'correction'] = 'Not Applicable'
                 continue
             
             if pair not in self.pair2idx:
-                df.at[idx, 'imputation_type'] = 'unknown_pair'
+                df.at[idx, 'imputation_source'] = 'unknown_pair'
+                df.at[idx, 'correction'] = 'Not Applicable'
                 continue
+
             pair_idx = self.pair2idx[pair]
             
-            # Get subgroup
+            # Get subgroup (might be None, but that's okay now with fallback)
             subgroup_idx = self._get_subgroup_index(
                 pair_idx, row['month_name'], row['day_name'], row['hour']
             )
             
+            # If no subgroup, use a placeholder (we'll rely on fallback)
             if subgroup_idx is None:
-                df.at[idx, 'imputation_type'] = 'unknown_subgroup'
-                continue
+                subgroup_idx = 0  # Use first subgroup as placeholder for key purposes
             
             date_hour = (row['data'], row['hour']) 
             
             # Flush batch if new time window
             if last_date_hour is not None and date_hour != last_date_hour:
-                self._flush_batch(current_batch)
+                self._flush_batch(current_batch, current_pair_batch)
                 current_batch = defaultdict(lambda: defaultdict(list))
+                current_pair_batch = defaultdict(list)
             
             last_date_hour = date_hour
             
-            # Check if value is valid real
+            # Check for meter change FIRST (before validity check)
             meter_id = self._get_contador_id(row)
+            if meter_id is not None:
+                last_meter = self.last_real_meter_id.get(contact_id)
+                if last_meter is not None and meter_id != last_meter:
+                    # Meter changed - reset tracking regardless of data validity
+                    self.last_real_cumulative[contact_id] = None  # Reset
+                    self.last_real_idx[contact_id] = None  # Reset
+                    
+                    # If we have a valid cumulative, use it as new baseline
+                    if not pd.isna(row['cumulative_value']):
+                        self.last_real_meter_id[contact_id] = meter_id # Only update is real to not lose track
+                        self.last_real_cumulative[contact_id] = row['cumulative_value']
+                        self.last_real_idx[contact_id] = idx
+                        df.at[idx, 'imputation_source'] = 'meter_change'
+                    
+                    else:
+                        # Meter changed but no reading yet
+                        df.at[idx, 'imputation_source'] = 'meter_change_no_reading'
+                    
+                    df.at[idx, 'correction'] = 'Not Applicable'
+                    df.at[idx, 'corrected_consumption'] = np.nan
+                    continue
+            
+            # Check if value is valid real
             is_real_cumulative, has_real_consumption = self._is_valid_real_value(
                 contact_id, 
                 row['cumulative_value'],
@@ -383,24 +467,33 @@ class BatchImputationEngine:
             )
             
             if not is_real_cumulative:
+                if contact_id not in self.last_real_idx:
+                    df.at[idx, 'imputation_source'] = 'no_readings'
+                    df.at[idx, 'correction'] = 'Not Applicable'
+                    continue
+
                 # Invalid or missing cumulative - needs full imputation
-                imputed_value, ewma_std = self._impute_value(contact_id, pair_idx, subgroup_idx)
+                imputed_value, ewma_std, source = self._impute_value(contact_id, pair_idx, subgroup_idx)
                 
                 if imputed_value is not None:
                     df.at[idx, 'consumption'] = imputed_value
-                    df.at[idx, 'imputation_type'] = 'fully_imputed'
+                    df.at[idx, 'imputation_source'] = f'imputed_{source}'  # e.g., 'imputed_contact_subgroup'
+                    df.at[idx, 'correction'] = 'No'  # Not yet corrected
                     df.at[idx, 'corrected_consumption'] = imputed_value
                     df.at[idx, 'ewma_std'] = ewma_std
                 else:
-                    df.at[idx, 'imputation_type'] = 'insufficient_data'
+                    df.at[idx, 'imputation_source'] = 'insufficient_data'
+                    df.at[idx, 'correction'] = 'Not Applicable'
+
                 continue
             
             # Has valid cumulative value
             is_baseline = contact_id not in self.last_real_idx
             
             if is_baseline:
-                # First value or after meter change
-                df.at[idx, 'imputation_type'] = 'baseline'
+                # First value
+                df.at[idx, 'imputation_source'] = 'baseline'
+                df.at[idx, 'correction'] = 'Not Applicable'
                 df.at[idx, 'corrected_consumption'] = np.nan
                 self.last_real_idx[contact_id] = idx
                 
@@ -408,27 +501,38 @@ class BatchImputationEngine:
                 # Real cumulative AND real consumption
                 consumption = row['consumption']
                 
-                # Update statistics
+                # Update statistics at ALL levels
+                # 1. Subgroup level
                 subgroup_key = (pair_idx, subgroup_idx)
                 current_batch[subgroup_key]['values'].append(consumption)
                 
-                contact_key = (contact_id, pair_idx, subgroup_idx)  # CHANGED: now includes pair_idx
-                self._update_stats(self.contact_stats[contact_key], consumption)
+                # 2. Contact + Subgroup level
+                contact_subgroup_key = (contact_id, pair_idx, subgroup_idx)
+                self._update_stats(self.contact_stats[contact_subgroup_key], consumption)
+                
+                # 3. Contact + Pair level (all subgroups)
+                contact_pair_key = (contact_id, pair_idx)
+                self._update_stats(self.contact_pair_stats[contact_pair_key], consumption)
+                
+                # 4. Pair level (all subgroups)
+                current_pair_batch[pair_idx].append(consumption)
                 
                 # Update tracking
                 self.last_real_cumulative[contact_id] = row['cumulative_value']
                 self.last_real_idx[contact_id] = idx
                 
-                df.at[idx, 'imputation_type'] = 'real'
+                df.at[idx, 'imputation_source'] = 'real'
+                df.at[idx, 'correction'] = 'Not Applicable'
                 df.at[idx, 'corrected_consumption'] = consumption
                 
             else:
-                # Real cumulative but MISSING consumption - impute but mark as anchor
-                imputed_value, ewma_std = self._impute_value(contact_id, pair_idx, subgroup_idx)
+                # Real cumulative but MISSING consumption - ANCHOR IMPUTED
+                imputed_value, ewma_std, source = self._impute_value(contact_id, pair_idx, subgroup_idx)
                 
                 if imputed_value is not None and imputed_value >= 0:
                     df.at[idx, 'consumption'] = imputed_value
-                    df.at[idx, 'imputation_type'] = 'anchor_imputed'  # Special marker!
+                    df.at[idx, 'imputation_source'] = f'anchor_{source}'  # e.g., 'anchor_contact_subgroup'
+                    df.at[idx, 'correction'] = 'No'  # Will become 'Yes' after normalization
                     df.at[idx, 'corrected_consumption'] = imputed_value
                     df.at[idx, 'ewma_std'] = ewma_std
                     
@@ -436,14 +540,11 @@ class BatchImputationEngine:
                     self.last_real_cumulative[contact_id] = row['cumulative_value']
                     self.last_real_idx[contact_id] = idx
                 else:
-                    df.at[idx, 'imputation_type'] = 'insufficient_data'
+                    df.at[idx, 'imputation_source'] = 'insufficient_data'
+                    df.at[idx, 'correction'] = 'Not Applicable'
         
         # Flush final batch
-        self._flush_batch(current_batch)
-
-        if self.skip:
-            print("Skipping normalization and cumulative recomputation as per configuration.")
-            return df
+        self._flush_batch(current_batch, current_pair_batch)
         
         print("Pass 2: Normalizing segments...")
 
@@ -454,12 +555,17 @@ class BatchImputationEngine:
             if len(contact_df) < 2:
                 continue
             
-            # Find all real value indices (including anchor_imputed)
+            # Anchor
+            anchor_sources = ['real', 'baseline', 'meter_change',
+                  'anchor_contact_subgroup', 'anchor_only_subgroup',
+                  'anchor_only_contact', 'anchor_only_group'] # Only ones with real cumulative
+
+            # Also include any anchor_imputed variants
             real_indices = contact_df[
-                contact_df['imputation_type'].isin(['real', 'baseline', 'anchor_imputed', 'corrected'])
+                (contact_df['imputation_source'].isin(anchor_sources))
             ].index.tolist()
             
-            # Normalize between consecutive real values
+            # Normalize between consecutive anchor values
             for i in range(len(real_indices) - 1):
                 start_idx = real_indices[i]
                 end_idx = real_indices[i + 1]
@@ -469,7 +575,7 @@ class BatchImputationEngine:
             
             # Write changes back to main dataframe
             df.loc[contact_mask, 'corrected_consumption'] = contact_df['corrected_consumption']
-            df.loc[contact_mask, 'imputation_type'] = contact_df['imputation_type']
+            df.loc[contact_mask, 'correction'] = contact_df['correction']
         
         print("Pass 3: Recomputing cumulative values...")
 
@@ -499,8 +605,16 @@ class BatchImputationEngine:
                 if row_meter is not None:
                     current_meter_id = row_meter
                 
+                # Handle meter_change_no_reading - reset cumulative
+                if row['imputation_source'] == 'meter_change_no_reading':
+                    current_cumulative = None
+                    continue
+                
                 # If we have a real cumulative value, use it as anchor
-                if row['imputation_type'] in ['real', 'baseline', 'anchor_imputed']:
+                # These sources have trustworthy cumulative values
+                anchor_sources = ['real', 'baseline', 'meter_change']
+                if (row['imputation_source'] in anchor_sources or 
+                    row['imputation_source'].startswith('anchor_')):
                     if not pd.isna(row['cumulative_value']):
                         current_cumulative = row['cumulative_value']
                         continue
@@ -516,13 +630,20 @@ class BatchImputationEngine:
 
         return df
     
-    def _flush_batch(self, batch_dict):
-        """Update subgroup statistics with batch means."""
+    def _flush_batch(self, batch_dict, pair_batch_dict):
+        """Update subgroup and pair statistics with batch means."""
+        # Update subgroup statistics
         for subgroup_key, data in batch_dict.items():
             values = data.get('values', [])
             if values:
                 batch_mean = np.mean(values)
                 self._update_stats(self.subgroup_stats[subgroup_key], batch_mean)
+        
+        # Update pair-level statistics
+        for pair_idx, values in pair_batch_dict.items():
+            if values:
+                batch_mean = np.mean(values)
+                self._update_stats(self.pair_stats[pair_idx], batch_mean)
 
 
 def process_full_dataset(input_csv, output_csv, subgroups_list, idx2pair, pair2idx, **kwargs):
@@ -548,7 +669,7 @@ def process_full_dataset(input_csv, output_csv, subgroups_list, idx2pair, pair2i
     print(f"Unique contacts: {df['contact_id'].nunique()}")
     print(f"Missing consumption values: {df['consumption'].isna().sum()}")
     
-    # Initialize engine (CHANGED: removed mapa_contact_id parameter)
+    # Initialize engine
     engine = BatchImputationEngine(
         subgroups_list=subgroups_list,
         idx2pair=idx2pair,
@@ -564,9 +685,15 @@ def process_full_dataset(input_csv, output_csv, subgroups_list, idx2pair, pair2i
     print("PROCESSING SUMMARY")
     print("="*60)
     print(f"Total rows processed: {len(result_df)}")
-    print("\nImputation type breakdown:")
-    print(result_df['imputation_type'].value_counts())
+    print("\nImputation source breakdown:")
+    print(result_df['imputation_source'].value_counts())
+    print("\nCorrection status breakdown:")
+    print(result_df['correction'].value_counts())
     print(f"\nRows with corrected consumption: {result_df['corrected_consumption'].notna().sum()}")
+    
+    # Cross-tabulation for detailed analysis
+    print("\nCross-tabulation (Imputation Source vs Correction):")
+    print(pd.crosstab(result_df['imputation_source'], result_df['correction']))
     
     # Save
     print(f"\nSaving results to {output_csv}...")
@@ -585,7 +712,7 @@ if __name__ == "__main__":
     pair2idx = data["pair2idx"]
     subgroups = data["subgroups"]
     
-    # Process full dataset (CHANGED: removed mapa_contact_id)
+    # Process full dataset
     result_df = process_full_dataset(
         input_csv="./Data/input_ts.csv",
         output_csv="./Data/output_ts.csv",
@@ -595,6 +722,5 @@ if __name__ == "__main__":
         warmup_contact=0,
         warmup_subgroup=0,
         weight_contact=0.7,
-        ewma_alpha=0.1,
-        skip=False,
+        ewma_alpha=0.1
     )

@@ -6,20 +6,17 @@ import time
 
 
 class OnlineImputationEngine:
-    def __init__(self, subgroups_list, idx2pair, pair2idx, contact_id,
+    def __init__(self, subgroups_list, contact_id,
                  warmup_contact=10, warmup_subgroup=50, weight_contact=0.7,
                  ewma_alpha=0.1):
         """
         Initialize the online imputation engine for a specific contact.
+        Now includes fallback strategy for robust imputation.
         
         Parameters:
         -----------
         subgroups_list : list
             Output from divide_dataframes() - list of subgroups per (calibre, tipo_consumo)
-        idx2pair : dict
-            Maps index -> (calibre, tipo_consumo)
-        pair2idx : dict
-            Maps (calibre, tipo_consumo) -> index
         contact_id : str
             The contact ID we're processing
         warmup_contact : int
@@ -33,8 +30,6 @@ class OnlineImputationEngine:
             Lower values = more smoothing, higher values = more reactive
         """
         self.subgroups_list = subgroups_list
-        self.idx2pair = idx2pair
-        self.pair2idx = pair2idx
         self.contact_id = contact_id
         self.warmup_contact = warmup_contact
         self.warmup_subgroup = warmup_subgroup
@@ -42,20 +37,38 @@ class OnlineImputationEngine:
         self.weight_subgroup = 1 - weight_contact
         self.ewma_alpha = ewma_alpha
         
-        # Initialize statistics for subgroups (updated online)
-        # Now tracking BOTH population mean E[X] and EWMA mean μ separately
+        # Initialize statistics for subgroups (per pair_idx, subgroup_idx)
         self.subgroup_stats = defaultdict(lambda: {
-            'pop_mean': None,       # E[X]_t (population mean for variance calculation)
-            'ewma_mean': None,      # μ_t (EWMA mean used for imputation)
-            'pop_var': None,        # V(X)_t (population variance)
-            'ewma_var': None,       # V(μ)_t (variance of EWMA estimator)
-            'ewma_std': None,       # sqrt(V(μ)_t) (uncertainty in mean estimate)
+            'pop_mean': None,
+            'ewma_mean': None,
+            'pop_var': None,
+            'ewma_var': None,
+            'ewma_std': None,
             'count': 0
         })
         
-        # CHANGED: Initialize contact statistics per (pair_idx, subgroup_idx)
-        # This ensures we don't mix statistics from different groups
+        # Contact statistics per (pair_idx, subgroup_idx)
         self.contact_stats = defaultdict(lambda: {
+            'pop_mean': None,
+            'ewma_mean': None,
+            'pop_var': None,
+            'ewma_var': None,
+            'ewma_std': None,
+            'count': 0
+        })
+        
+        # NEW: Contact statistics per pair_idx (all subgroups combined)
+        self.contact_pair_stats = defaultdict(lambda: {
+            'pop_mean': None,
+            'ewma_mean': None,
+            'pop_var': None,
+            'ewma_var': None,
+            'ewma_std': None,
+            'count': 0
+        })
+        
+        # NEW: Pair-level statistics (all contacts, all subgroups)
+        self.pair_stats = defaultdict(lambda: {
             'pop_mean': None,
             'ewma_mean': None,
             'pop_var': None,
@@ -111,7 +124,7 @@ class OnlineImputationEngine:
         for pair_idx, subgroups in enumerate(self.subgroups_list):
             for subgroup_idx, subgroup in enumerate(subgroups):
                 df = subgroup['df'].copy()
-                df['pair_idx'] = pair_idx  # ADDED: Track which pair this belongs to
+                df['pair_idx'] = pair_idx
                 df['subgroup_idx'] = subgroup_idx
                 
                 # All contacts data
@@ -231,56 +244,83 @@ class OnlineImputationEngine:
     
     def _update_contact_stats(self, pair_idx, subgroup_idx, consumption):
         """
-        Update contact statistics for a (pair, subgroup) combination with a new real consumption value.
+        Update contact statistics at multiple levels with a new real consumption value.
         
-        CHANGED: Now uses (pair_idx, subgroup_idx) as key instead of just subgroup_idx
+        Updates:
+        1. Contact + Subgroup level: (pair_idx, subgroup_idx)
+        2. Contact + Pair level: (pair_idx) - all subgroups combined
         """
-        contact_key = (pair_idx, subgroup_idx)
-        self._update_stats(self.contact_stats[contact_key], consumption)
+        # Update contact + subgroup level
+        contact_subgroup_key = (pair_idx, subgroup_idx)
+        self._update_stats(self.contact_stats[contact_subgroup_key], consumption)
+        
+        # Update contact + pair level (all subgroups)
+        self._update_stats(self.contact_pair_stats[pair_idx], consumption)
     
     def _impute_value(self, pair_idx, subgroup_idx):
         """
-        Impute a consumption value using weighted combination of contact and subgroup EWMA means.
-        
-        CHANGED: Now uses pair_idx to look up correct contact stats
+        Impute a consumption value using fallback hierarchy:
+        1. Contact + Subgroup (weighted combination) - BEST
+        2. Only Subgroup (no contact history)
+        3. Only Contact + Pair (contact history without subgroup discrimination)
+        4. Only Pair (group statistics)
+        5. Insufficient data - WORST
         
         Returns:
         --------
-        tuple: (imputed_consumption, combined_ewma_std) or (None, None) if insufficient data
+        tuple: (imputed_consumption, combined_ewma_std, source) or (None, None, None) if insufficient data
         """
-        # Get subgroup stats (indexed by pair_idx, subgroup_idx)
+        # Get stats for all levels
         subgroup_key = (pair_idx, subgroup_idx)
-        subgroup_ewma_mean = self.subgroup_stats[subgroup_key]['ewma_mean']
-        subgroup_ewma_std = self.subgroup_stats[subgroup_key]['ewma_std']
-        subgroup_count = self.subgroup_stats[subgroup_key]['count']
+        contact_subgroup_key = (pair_idx, subgroup_idx)
+        contact_pair_key = pair_idx
+        pair_key = pair_idx
         
-        # Get contact stats for this (pair, subgroup) combination
-        contact_key = (pair_idx, subgroup_idx)
-        contact_ewma_mean = self.contact_stats[contact_key]['ewma_mean']
-        contact_ewma_std = self.contact_stats[contact_key]['ewma_std']
-        contact_count = self.contact_stats[contact_key]['count']
+        subgroup_stats = self.subgroup_stats[subgroup_key]
+        contact_subgroup_stats = self.contact_stats[contact_subgroup_key]
+        contact_pair_stats = self.contact_pair_stats[contact_pair_key]
+        pair_stats = self.pair_stats[pair_key]
         
-        # Check if we have enough data
-        if contact_count < self.warmup_contact or subgroup_count < self.warmup_subgroup:
-            return None, None
+        # Check warmup requirements for each level
+        has_contact_subgroup = (contact_subgroup_stats['count'] >= self.warmup_contact and 
+                                contact_subgroup_stats['ewma_mean'] is not None)
+        has_subgroup = (subgroup_stats['count'] >= self.warmup_subgroup and 
+                       subgroup_stats['ewma_mean'] is not None)
+        has_contact_pair = (contact_pair_stats['count'] >= self.warmup_contact and 
+                           contact_pair_stats['ewma_mean'] is not None)
+        has_pair = (pair_stats['count'] >= self.warmup_subgroup and 
+                   pair_stats['ewma_mean'] is not None)
         
-        if contact_ewma_mean is None or subgroup_ewma_mean is None:
-            return None, None
+        # Fallback hierarchy
+        if has_contact_subgroup and has_subgroup:
+            # LEVEL 1: Best case - both contact+subgroup and subgroup available
+            imputed_mean = (self.weight_contact * contact_subgroup_stats['ewma_mean'] + 
+                           self.weight_subgroup * subgroup_stats['ewma_mean'])
+            
+            contact_ewma_var = contact_subgroup_stats['ewma_std']**2 if contact_subgroup_stats['ewma_std'] else 0
+            subgroup_ewma_var = subgroup_stats['ewma_std']**2 if subgroup_stats['ewma_std'] else 0
+            
+            combined_ewma_var = (self.weight_contact**2 * contact_ewma_var + 
+                                self.weight_subgroup**2 * subgroup_ewma_var)
+            combined_ewma_std = np.sqrt(combined_ewma_var)
+            
+            return imputed_mean, combined_ewma_std, 'contact_subgroup'
         
-        # Weighted combination of EWMA means
-        imputed_mean = (self.weight_contact * contact_ewma_mean + 
-                       self.weight_subgroup * subgroup_ewma_mean)
+        elif has_subgroup:
+            # LEVEL 2: No contact history, but subgroup available
+            return subgroup_stats['ewma_mean'], subgroup_stats['ewma_std'], 'only_subgroup'
         
-        # Combined EWMA variance 
-        contact_ewma_var = contact_ewma_std**2 if contact_ewma_std else 0
-        subgroup_ewma_var = subgroup_ewma_std**2 if subgroup_ewma_std else 0
+        elif has_contact_pair:
+            # LEVEL 3: No subgroup data, use contact's overall history for this pair
+            return contact_pair_stats['ewma_mean'], contact_pair_stats['ewma_std'], 'only_contact'
         
-        combined_ewma_var = (self.weight_contact**2 * contact_ewma_var + 
-                            self.weight_subgroup**2 * subgroup_ewma_var)
+        elif has_pair:
+            # LEVEL 4: No contact data at all, use overall pair statistics
+            return pair_stats['ewma_mean'], pair_stats['ewma_std'], 'only_group'
         
-        combined_ewma_std = np.sqrt(combined_ewma_var)
-        
-        return imputed_mean, combined_ewma_std
+        else:
+            # LEVEL 5: Insufficient data at all levels
+            return None, None, 'insufficient_data'
     
     def _normalize_segment(self):
         """
@@ -342,7 +382,8 @@ class OnlineImputationEngine:
     def process_all_points(self):
         """
         Process all data points in chronological order.
-        Updates subgroup stats for ALL contacts using batched means, performs imputation only for target contact.
+        Updates subgroup and pair stats for ALL contacts using batched means, 
+        performs imputation only for target contact using fallback strategy.
         
         Returns:
         --------
@@ -355,21 +396,29 @@ class OnlineImputationEngine:
         current_batch = {
             'date': None,
             'hour': None,
-            'observations': defaultdict(list)  # (pair_idx, subgroup_idx) -> list of consumption values
+            'subgroup_observations': defaultdict(list),  # (pair_idx, subgroup_idx) -> list
+            'pair_observations': defaultdict(list)        # pair_idx -> list
         }
         
         def flush_batch():
-            """Process accumulated observations and update subgroup stats."""
-            if current_batch['observations']:
-                for subgroup_key, consumptions in current_batch['observations'].items():
+            """Process accumulated observations and update statistics."""
+            # Update subgroup-level statistics
+            if current_batch['subgroup_observations']:
+                for subgroup_key, consumptions in current_batch['subgroup_observations'].items():
                     if consumptions:
-                        # Calculate mean of all observations for this subgroup in this time window
                         batch_mean = np.mean(consumptions)
-                        # Update stats with the batch mean
                         self._update_stats(self.subgroup_stats[subgroup_key], batch_mean)
-                
-                # Clear the batch
-                current_batch['observations'].clear()
+            
+            # Update pair-level statistics (all subgroups combined)
+            if current_batch['pair_observations']:
+                for pair_key, consumptions in current_batch['pair_observations'].items():
+                    if consumptions:
+                        batch_mean = np.mean(consumptions)
+                        self._update_stats(self.pair_stats[pair_key], batch_mean)
+            
+            # Clear the batch
+            current_batch['subgroup_observations'].clear()
+            current_batch['pair_observations'].clear()
         
         for all_idx in range(len(self.all_data)):
             row = self.all_data.iloc[all_idx]
@@ -394,11 +443,16 @@ class OnlineImputationEngine:
             
             is_target = row['is_target']
             
-            # Accumulate real observations for batch processing
-            # CHANGED: Key now includes pair_idx
+            # Accumulate real observations for batch processing at multiple levels
             if row['is_real']:
+                consumption = row['consumption']
+                
+                # Subgroup level
                 subgroup_key = (pair_idx, subgroup_idx)
-                current_batch['observations'][subgroup_key].append(row['consumption'])
+                current_batch['subgroup_observations'][subgroup_key].append(consumption)
+                
+                # Pair level (all subgroups)
+                current_batch['pair_observations'][pair_idx].append(consumption)
             
             # Process target contact for imputation and results
             if is_target:
@@ -414,21 +468,20 @@ class OnlineImputationEngine:
     
     def _process_target_point(self, row, pair_idx, subgroup_idx):
         """
-        Process a single point for the target contact (imputation logic).
-        
-        CHANGED: Now receives pair_idx as parameter
+        Process a single point for the target contact (imputation logic with fallback).
         """
         result = {
             'data': row['data'],
             'month': row['month_name'],
             'day': row['day_name'],
             'hour': row['hour'],
-            'pair_idx': pair_idx,  # ADDED: Track which pair this point belongs to
+            'pair_idx': pair_idx,
             'subgroup_idx': subgroup_idx,
             'corrected_consumption': None,
             'corrected_cumulative': None,
             'index': len(self.results),
-            'contador_id': row.get('contador_id', 'default')
+            'contador_id': row.get('contador_id', 'default'),
+            'imputation_source': None  # Track which level was used
         }
         
         if row['is_real']:
@@ -436,7 +489,7 @@ class OnlineImputationEngine:
             consumption = row['consumption']
             cumulative = row['cumulative_value']
             
-            # Update contact statistics (CHANGED: now includes pair_idx)
+            # Update contact statistics at multiple levels
             self._update_contact_stats(pair_idx, subgroup_idx, consumption)
             
             result['type'] = 'real'
@@ -444,12 +497,13 @@ class OnlineImputationEngine:
             result['consumption'] = consumption
             result['cumulative'] = cumulative
             result['ewma_std'] = None
+            result['imputation_source'] = 'real'
 
             self.results.append(result)
             
         else:
-            # Missing value - try to impute (CHANGED: now includes pair_idx)
-            imputed_consumption, combined_ewma_std = self._impute_value(pair_idx, subgroup_idx)
+            # Missing value - try to impute with fallback strategy
+            imputed_consumption, combined_ewma_std, source = self._impute_value(pair_idx, subgroup_idx)
 
             if imputed_consumption is not None:
                 cumulative = row['cumulative_value'] if not pd.isna(row['cumulative_value']) else self.last_cumulative + imputed_consumption
@@ -461,15 +515,17 @@ class OnlineImputationEngine:
                 result['consumption'] = imputed_consumption
                 result['cumulative'] = cumulative
                 result['ewma_std'] = combined_ewma_std
+                result['imputation_source'] = source
                 self.results.append(result)
                     
             else:
-                # Skip this point - not enough data to impute
+                # Skip this point - not enough data to impute at any level
                 result['type'] = 'skipped'
                 result['diff'] = None
                 result['consumption'] = None
                 result['cumulative'] = None
                 result['ewma_std'] = None
+                result['imputation_source'] = 'insufficient_data'
                 self.results.append(result)
                 return result
         
@@ -487,6 +543,7 @@ class SlidingWindowVisualizer:
     def __init__(self, engine, delay=0.1, window_size=100, title=None):
         """
         Create online visualization with sliding window of the imputation process.
+        Now displays imputation source information.
         
         Parameters:
         -----------
@@ -514,6 +571,9 @@ class SlidingWindowVisualizer:
             'imputed': [],
             'corrected': []
         }
+        
+        # Track imputation sources
+        self.imputation_sources = defaultdict(int)
         
         self._setup_plot()
     
@@ -596,10 +656,11 @@ class SlidingWindowVisualizer:
                           c='yellow', s=50, label='Corrected',
                           zorder=4, alpha=0.8, edgecolors='orange', linewidths=1.5)
         
-        # Set title with progress
+        # Set title with progress and imputation stats
+        source_str = " | ".join([f"{k}: {v}" for k, v in list(self.imputation_sources.items())[:3]])
         self.ax.set_title(
-            f'{self.title} | All: {all_processed}/{len(self.engine.all_data)} | Target: {target_processed}/{self.engine.target_num}',
-            fontsize=14
+            f'{self.title} | All: {all_processed}/{len(self.engine.all_data)} | Target: {target_processed}/{self.engine.target_num}\n{source_str}',
+            fontsize=12
         )
         
         self.ax.set_xlabel('Date', fontsize=12)
@@ -654,6 +715,7 @@ class SlidingWindowVisualizer:
         print(f"Window size: {self.window_size} points")
         print(f"Delay: {self.delay}s per point")
         print(f"EWMA alpha: {self.engine.ewma_alpha}")
+        print(f"Fallback strategy enabled: 4 levels")
         print("-" * 60)
         
         all_processed = 0
@@ -668,6 +730,10 @@ class SlidingWindowVisualizer:
                 if result is None:
                     skipped_count += 1
                     continue
+                
+                # Track imputation sources
+                if result.get('imputation_source'):
+                    self.imputation_sources[result['imputation_source']] += 1
                   
                 # Store for summary
                 if result['type'] == 'real':
@@ -695,6 +761,9 @@ class SlidingWindowVisualizer:
         print(f"Real points: {len(self.all_data['real'])}")
         print(f"Imputed points: {len(self.all_data['imputed'])}")
         print(f"Corrected points: {len(self.all_data['corrected'])}")
+        print("\nImputation source breakdown:")
+        for source, count in sorted(self.imputation_sources.items(), key=lambda x: x[1], reverse=True):
+            print(f"  {source}: {count}")
         
         plt.ioff()
         plt.show()
@@ -709,18 +778,13 @@ if __name__ == "__main__":
     with open("./variables/variables.pkl", "rb") as f:
         data = pickle.load(f)
 
-    idx2pair = data["idx2pair"]
-    pair2idx = data["pair2idx"]
     subgroups = data["subgroups"]
 
     # Initialize online engine for a specific contact
-    # CHANGED: Removed mapa_contact_id parameter
     contact_id = 'LC43022'
     
     engine = OnlineImputationEngine(
         subgroups_list=subgroups,
-        idx2pair=idx2pair,
-        pair2idx=pair2idx,
         contact_id=contact_id,
         warmup_contact=0,
         warmup_subgroup=0,
