@@ -12,5 +12,7 @@
 !info/** 
 !hyperparameter_pivot_table.csv
 !hyperparameter_tuning_results.csv
+!images/
+!images/**
 
 variables/

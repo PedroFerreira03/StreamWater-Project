@@ -962,7 +962,7 @@ if __name__ == "__main__":
     contact_id = 'LC41847'
     test_config_path = 'info/test_config.json'
     
-    # Initialize testing engine (CHANGED: removed mapa_contact_id)
+    # Initialize testing engine 
     engine = OnlineImputationTester(
         subgroups_list=subgroups,
         contact_id=contact_id,
