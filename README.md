@@ -1,5 +1,7 @@
 # Streamwater Project — DISCO
 
+[![Online Imputation Simulation](https://img.youtube.com/vi/7xL2HA_SC9U/maxresdefault.jpg)](https://www.youtube.com/watch?v=7xL2HA_SC9U)
+
 **DISCO (DIstributional Subgroup Clustering for Online imputation)** is a fast and scalable framework for **batch time-series imputation** of water consumption data.
 
 The method leverages **frequency-distribution clustering of behavioural subgroups** across **hourly, daily, weekly and monthly patterns**.
